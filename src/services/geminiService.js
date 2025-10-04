@@ -1,4 +1,4 @@
-import { GoogleGenerativeAI } from '@google/generative-ai';
+// import { GoogleGenerativeAI } from '@google/generative-ai';
 
 // Energy and Confidence level constants
 export const EnergyLevel = {
@@ -18,7 +18,7 @@ export const ConfidenceLevel = {
 };
 
 // Backend API base URL
-const API_BASE_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:3001/api';
+const API_BASE_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:3001/api'|| '/api' ;
 
 export class GeminiService {
   // Initialize conversation with scenario-specific opening

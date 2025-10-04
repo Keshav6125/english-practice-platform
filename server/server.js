@@ -1,54 +1,99 @@
+// server/server.js
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 
-// Load environment variables
+// Load environment variables (works locally; hosts inject env at runtime)
 dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-// Configure CORS
+// ---- Basic safety / parsing ----
+app.use(express.json({ limit: '1mb' }));
+
+// ---- CORS (allow only what you set in ALLOWED_ORIGINS) ----
+const allowlist = (process.env.ALLOWED_ORIGINS || '')
+  .split(',')
+  .map(s => s.trim())
+  .filter(Boolean);
+
+// If allowlist is empty → allow localhost during dev
+if (allowlist.length === 0) {
+  allowlist.push('http://localhost:5173');
+}
+
 const corsOptions = {
-  origin: process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(',') : '*',
-  optionsSuccessStatus: 200
+  origin(origin, cb) {
+    // allow non-browser or same-origin requests
+    if (!origin) return cb(null, true);
+    if (allowlist.includes(origin)) return cb(null, true);
+    return cb(new Error(`CORS blocked for origin: ${origin}`));
+  },
+  credentials: true,
+  optionsSuccessStatus: 200,
 };
 
-// Middleware
 app.use(cors(corsOptions));
-app.use(express.json());
+app.options('*', cors(corsOptions)); // handle preflight
 
-// Initialize Gemini client with server-side API key
+// ---- Gemini client (server-side only) ----
+if (!process.env.GEMINI_API_KEY) {
+  console.warn(
+    '⚠️  GEMINI_API_KEY is not set. Endpoints will fail until you add it to your server environment.'
+  );
+}
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
-// Health check endpoint
-app.get('/api/health', (req, res) => {
-  res.json({ status: 'OK', message: 'Backend proxy is running' });
+// ---- Helpers ----
+function safeScenario(s) {
+  // tolerate missing/partial scenario from client
+  const category = s?.category || 'free_topic';
+  const title = s?.title || 'General practice';
+  const context = s?.context || '';
+  return { category, title, context };
+}
+
+function ensureModel() {
+  // keep your original model; change here if you need another
+  return genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+}
+
+// ---- Health check ----
+app.get('/api/health', (_req, res) => {
+  res.json({
+    status: 'OK',
+    message: 'Backend proxy is running',
+    allowlist,
+    time: Date.now(),
+  });
 });
 
-// Initialize conversation endpoint
+// ---- Initialize conversation ----
 app.post('/api/initialize-conversation', async (req, res) => {
   try {
-    const { scenario } = req.body;
-    
+    const scenario = safeScenario(req.body?.scenario);
+
     let openingPrompt = '';
-    
-    // Scenario-specific conversation starters
     switch (scenario.category) {
       case 'job_interview':
-        openingPrompt = `You are an HR interviewer conducting a professional job interview. Start the interview naturally by greeting the candidate and asking them to begin with "Tell me about yourself." Be professional but friendly.`;
+        openingPrompt =
+          'You are an HR interviewer. Greet the candidate and ask them to begin with "Tell me about yourself." Be professional and friendly.';
         break;
       case 'presentation':
-        openingPrompt = `You are a professor and the student is about to give a presentation. Welcome them warmly and ask them to introduce their topic. Encourage them to begin their presentation.`;
+        openingPrompt =
+          'You are a professor. Welcome the student warmly and ask them to introduce their presentation topic. Encourage them to begin.';
         break;
       case 'free_topic':
-        openingPrompt = `You are a friendly conversation partner. The student wants to practice speaking on any topic they choose. Warmly greet them and ask what topic they'd like to discuss today. Be encouraging and supportive.`;
-        default:
-        openingPrompt = `You are a helpful conversation partner practicing English with a student.`;
+        openingPrompt =
+          'You are a friendly conversation partner. Greet the student and ask what topic they would like to discuss today. Be encouraging.';
+        break;
+      default:
+        openingPrompt = 'You are a helpful conversation partner practicing English with a student.';
     }
 
-    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+    const model = ensureModel();
     const prompt = `${openingPrompt}
 
 Scenario: ${scenario.title}
@@ -56,32 +101,38 @@ Context: ${scenario.context}
 
 Start the conversation naturally and appropriately for this scenario. The student just said: "Hello, I'm ready to start practicing."
 
-Keep your response brief (1-2 sentences) and welcoming.`;
+Keep your response brief (1–2 sentences) and welcoming.`;
 
     const result = await model.generateContent(prompt);
-    const response = await result.response;
-    const textResponse = response.text() || 'Hello! Let\'s begin our practice session.';
-    
+    const textResponse = result?.response?.text?.() || "Hello! Let's begin our practice session.";
+
     res.json({ response: textResponse });
-  } catch (error) {
-    console.error('Error initializing conversation:', error);
+  } catch (err) {
+    console.error('Error initializing conversation:', err);
     res.status(500).json({ error: 'Failed to initialize conversation' });
   }
 });
 
-// Generate conversation response endpoint
+// ---- Generate conversation response ----
 app.post('/api/generate-response', async (req, res) => {
   try {
-    const { scenario, userMessage, conversationHistory = [], turnCount = 0 } = req.body;
-    
-    // Build conversation context based on scenario
+    const scenario = safeScenario(req.body?.scenario);
+    const userMessage = String(req.body?.userMessage ?? '').trim();
+    const conversationHistory = Array.isArray(req.body?.conversationHistory)
+      ? req.body.conversationHistory
+      : [];
+    const turnCount = Number.isFinite(req.body?.turnCount) ? Number(req.body.turnCount) : 0;
+
+    if (!userMessage) {
+      return res.status(400).json({ error: 'userMessage is required' });
+    }
+
     let systemPrompt = '';
-    
     switch (scenario.category) {
       case 'job_interview':
-        systemPrompt = `You are conducting a professional job interview. Ask relevant interview questions, listen to responses, and ask thoughtful follow-up questions. 
+        systemPrompt = `You are conducting a professional job interview. Ask relevant interview questions, listen to responses, and ask thoughtful follow-ups.
 
-Common questions to ask during the interview:
+Common questions:
 - Tell me about yourself
 - Why should we hire you?
 - What are your strengths and weaknesses?
@@ -89,26 +140,24 @@ Common questions to ask during the interview:
 - Where do you see yourself in 5 years?
 - Why do you want this job?
 
-- For job descriptions: Become a professional interviewer asking relevant questions
-- For casual topics: Become a friendly conversation partner  
-- For customer service scenarios: Become a customer with appropriate concerns
-- For workplace situations: Become a colleague or manager
-- For academic topics: Become a professor or study partner
-- For any other context: Adapt appropriately to the situation
+Adapt to similar scenarios:
+- Job descriptions → interviewer
+- Casual topics → friendly partner
+- Customer service → act as customer
+- Workplace → colleague/manager
+- Academic → professor/study partner
 
-Analyze their input and immediately embody the most suitable character. Ask tailored questions that match the scenario they want to practice. Be dynamic and responsive to create realistic, valuable practice experiences.`;
+Be dynamic and realistic.`;
         break;
-        
       default:
-        systemPrompt = `You are a helpful conversation partner practicing English with a student.`;
+        systemPrompt = 'You are a helpful conversation partner practicing English with a student.';
     }
 
-    // Build conversation history text
-    const historyText = conversationHistory.map(msg => 
-      `${msg.role === 'user' ? 'Student' : 'You'}: ${msg.content}`
-    ).join('\n');
+    const historyText = conversationHistory
+      .map((m) => `${m.role === 'user' ? 'Student' : 'You'}: ${m.content}`)
+      .join('\n');
 
-    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+    const model = ensureModel();
     const prompt = `${systemPrompt}
 
 Scenario: ${scenario.title}
@@ -120,38 +169,43 @@ ${historyText}
 Student just said: "${userMessage}"
 
 Guidelines:
-- Keep responses conversational and natural (1-2 sentences)
+- Keep responses conversational and natural (1–2 sentences)
 - Ask engaging follow-up questions
 - Adapt to the student's level
 - Be encouraging and supportive
 - Stay in character for the scenario
-- If they seem to struggle, gently help them continue
+- If they struggle, gently help them continue
 
 Respond as the conversation partner:`;
 
     const result = await model.generateContent(prompt);
-    const response = await result.response;
-    const textResponse = response.text() || 'That\'s interesting. Can you tell me more?';
-    
-    res.json({ response: textResponse });
-  } catch (error) {
-    console.error('Error generating conversation response:', error);
+    const textResponse = result?.response?.text?.() || "That's interesting. Can you tell me more?";
+
+    res.json({ response: textResponse, turnCount });
+  } catch (err) {
+    console.error('Error generating conversation response:', err);
     res.status(500).json({ error: 'Failed to generate AI response' });
   }
 });
 
-// Generate feedback report endpoint
+// ---- Generate feedback ----
 app.post('/api/generate-feedback', async (req, res) => {
   try {
-    const { transcript, scenario, audioAnalysis } = req.body;
-    
+    const scenario = safeScenario(req.body?.scenario);
+    const transcript = String(req.body?.transcript ?? '').trim();
+    const audioAnalysis = req.body?.audioAnalysis;
+
+    if (!transcript) {
+      return res.status(400).json({ error: 'transcript is required' });
+    }
+
     const feedbackPrompt = `Analyze this English speaking practice session and provide detailed feedback in JSON format.
 
 Scenario: ${scenario.title} (${scenario.category})
 Student's speech transcript: "${transcript}"
 ${audioAnalysis ? `Audio analysis: Duration ${audioAnalysis.duration}ms, Speaking rate: ${audioAnalysis.speakingRate} WPM, Pauses: ${audioAnalysis.pauseCount}` : ''}
 
-Provide your response in this exact JSON format:
+Provide your response in this exact JSON format only (no prose outside JSON):
 {
   "overallScore": 8,
   "grammarFeedback": {
@@ -190,28 +244,30 @@ Provide your response in this exact JSON format:
   "practiceSuggestions": ["suggestion1", "suggestion2"]
 }`;
 
-    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+    const model = ensureModel();
     const result = await model.generateContent(feedbackPrompt);
-    const response = await result.response;
-    const responseText = response.text() || '{}';
-    
-    // Clean the response text to extract JSON
-    const cleanJsonText = responseText
-      .replace(/```json\s*/g, '')
-      .replace(/```\s*$/g, '')
-      .trim();
-    
-    const feedbackJson = JSON.parse(cleanJsonText);
-    
+    const raw = result?.response?.text?.() || '{}';
+
+    // Strip code fences if present
+    const clean = raw.replace(/```json\s*|\s*```/g, '').trim();
+
+    let feedbackJson;
+    try {
+      feedbackJson = JSON.parse(clean);
+    } catch (parseErr) {
+      console.error('JSON parse failed, returning minimal payload. Raw was:', raw);
+      feedbackJson = { overallScore: 5 };
+    }
+
     res.json(feedbackJson);
-  } catch (error) {
-    console.error('Error generating feedback report:', error);
+  } catch (err) {
+    console.error('Error generating feedback report:', err);
     res.status(500).json({ error: 'Failed to generate feedback report' });
   }
 });
 
-// Start server
+// ---- Start server ----
 app.listen(PORT, () => {
-  console.log(`Server is running on port ${PORT}`);
-  console.log(`Allowed origins: ${process.env.ALLOWED_ORIGINS || 'All origins allowed'}`);
+  console.log(`✅ Server listening on :${PORT}`);
+  console.log(`✅ Allowed origins: ${allowlist.join(', ')}`);
 });
