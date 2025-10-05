@@ -272,6 +272,7 @@ export const PracticeSession: React.FC<PracticeSessionProps> = ({
       // Wait for speech recognition to finish processing or time out gracefully
       await waitForSpeechProcessing();
 
+      let finalTranscript =
       const finalTranscript =
         transcriptRef.current.trim() || interimTranscriptRef.current.trim();
 
@@ -303,6 +304,11 @@ export const PracticeSession: React.FC<PracticeSessionProps> = ({
   }, [
     stopRecording,
     stopListening,
+    waitForSpeechProcessing,
+    speechSupported,
+    speechError,
+    clearRecording,
+    resetTranscript
     clearRecording,
     resetTranscript,
     speechSupported,
@@ -963,6 +969,7 @@ export const PracticeSession: React.FC<PracticeSessionProps> = ({
             <Box display="flex" alignItems="center" gap={4}>
               {!isRecording && isWaitingForUser ? (
                 <Tooltip
+                  title={speechSupported ? 'Start recording your response' : 'Speech recognition is unavailable in this browser'}
                   title={
                     speechSupported
                       ? 'Start recording your response'
@@ -983,6 +990,7 @@ export const PracticeSession: React.FC<PracticeSessionProps> = ({
                             ? 'rgba(156,163,175,0.3)'
                             : 'linear-gradient(135deg, var(--color-accent), var(--color-accent2))',
                         color: 'white',
+                        cursor: isProcessing || !speechSupported ? 'not-allowed' : 'pointer'
                         cursor: isProcessing || !speechSupported ? 'not-allowed' : 'pointer',
                         opacity: speechSupported ? 1 : 0.6
                       }}
