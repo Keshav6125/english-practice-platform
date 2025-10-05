@@ -80,7 +80,8 @@ export const PracticeSession: React.FC<PracticeSessionProps> = ({
     resetTranscript,
     startListening,
     stopListening,
-    isSupported: speechSupported
+    isSupported: speechSupported,
+    error: speechError
   } = useSpeechRecognition();
 
   const latestAiMessage = useMemo(() => {
@@ -147,19 +148,31 @@ export const PracticeSession: React.FC<PracticeSessionProps> = ({
   // Handle voice recording and transcription
   const handleStartRecording = useCallback(async () => {
     try {
-      setError(null);
       setInfoMessage(null);
+      if (!speechSupported) {
+        const unsupportedMessage =
+          'Speech recognition is not supported in this browser. Please try using a supported browser like Chrome or Edge for microphone features.';
+        setError(unsupportedMessage);
+        setInfoMessage(unsupportedMessage);
+        return false;
+      }
+      setError(null);
       resetTranscript();
       await startRecording();
-      if (speechSupported) {
-        startListening();
-      }
+      startListening();
       return true;
     } catch (err) {
       setError('Failed to start recording. Please check your microphone permissions.');
       return false;
     }
-  }, [startRecording, startListening, resetTranscript, speechSupported]);
+  }, [
+    setError,
+    setInfoMessage,
+    speechSupported,
+    resetTranscript,
+    startRecording,
+    startListening
+  ]);
 
   const handleAutoStartRecording = useCallback(async () => {
     if (isRecording) {
@@ -196,9 +209,14 @@ export const PracticeSession: React.FC<PracticeSessionProps> = ({
       const audioRecording = await stopRecording();
       stopListening();
 
+      if (!speechSupported) {
+        setIsProcessing(false);
+        return;
+      }
+
       // Wait a moment for speech recognition to finish processing
       await new Promise(resolve => setTimeout(resolve, 1000));
-      
+
       let finalTranscript = transcript.trim() || interimTranscript.trim();
 
       // Since Gemini doesn't have audio transcription, rely on browser speech recognition
@@ -218,7 +236,15 @@ export const PracticeSession: React.FC<PracticeSessionProps> = ({
     } finally {
       setIsProcessing(false);
     }
-  }, [stopRecording, stopListening, transcript, interimTranscript, clearRecording, resetTranscript]);
+  }, [
+    stopRecording,
+    stopListening,
+    speechSupported,
+    transcript,
+    interimTranscript,
+    clearRecording,
+    resetTranscript
+  ]);
 
   // Process user message and get AI response
   const processUserMessage = async (message: string) => {
@@ -516,9 +542,17 @@ export const PracticeSession: React.FC<PracticeSessionProps> = ({
       </Card>
 
       {/* Error Display */}
-      {(error || recordingError) && (
-        <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>
-          {error || recordingError}
+      {(error || recordingError || speechError) && (
+        <Alert
+          severity="error"
+          sx={{ mb: 2 }}
+          onClose={error ? () => setError(null) : undefined}
+        >
+          {[error, recordingError, speechError]
+            .filter(Boolean)
+            .map((message, index) => (
+              <div key={index}>{message}</div>
+            ))}
         </Alert>
       )}
 
@@ -816,21 +850,34 @@ export const PracticeSession: React.FC<PracticeSessionProps> = ({
             {/* Modern Record Button */}
             <Box display="flex" alignItems="center" gap={4}>
               {!isRecording && isWaitingForUser ? (
-                <button
-                  className={`record-button ${isRecording ? 'recording' : ''}`}
-                  onClick={handleStartRecording}
-                  disabled={isProcessing}
-                  style={{
-                    border: 'none',
-                    background: isProcessing 
-                      ? 'rgba(156,163,175,0.3)' 
-                      : 'linear-gradient(135deg, var(--color-accent), var(--color-accent2))',
-                    color: 'white',
-                    cursor: isProcessing ? 'not-allowed' : 'pointer'
-                  }}
+                <Tooltip
+                  title={
+                    speechSupported
+                      ? ''
+                      : 'Speech recognition is not supported in this browser. Please try another browser to use the microphone.'
+                  }
+                  disableHoverListener={speechSupported}
                 >
-                  <Mic sx={{ fontSize: 32 }} />
-                </button>
+                  <span>
+                    <button
+                      className={`record-button ${isRecording ? 'recording' : ''}`}
+                      onClick={handleStartRecording}
+                      disabled={isProcessing || !speechSupported}
+                      style={{
+                        border: 'none',
+                        background:
+                          isProcessing || !speechSupported
+                            ? 'rgba(156,163,175,0.3)'
+                            : 'linear-gradient(135deg, var(--color-accent), var(--color-accent2))',
+                        color: 'white',
+                        cursor: isProcessing || !speechSupported ? 'not-allowed' : 'pointer',
+                        opacity: speechSupported ? 1 : 0.6
+                      }}
+                    >
+                      <Mic sx={{ fontSize: 32 }} />
+                    </button>
+                  </span>
+                </Tooltip>
               ) : isRecording ? (
                 <button
                   className="record-button recording"
