@@ -190,24 +190,10 @@ export const PracticeSession: React.FC<PracticeSessionProps> = ({
       return false;
     }
   }, [speechSupported, startRecording, startListening, resetTranscript]);
-  }, [
-    setError,
-    setInfoMessage,
-    speechSupported,
-    resetTranscript,
-    startRecording,
-    startListening
-  ]);
 
   const handleAutoStartRecording = useCallback(async () => {
     if (isRecording) {
       return true;
-    }
-    const started = await handleStartRecording();
-    if (!started) {
-      setInfoMessage('Automatic microphone activation was blocked. Please tap the mic button.');
-      return false;
-    }
     }
     const started = await handleStartRecording();
     if (!started) {
@@ -279,17 +265,10 @@ export const PracticeSession: React.FC<PracticeSessionProps> = ({
       // Wait a moment for speech recognition to finish processing
       await new Promise(resolve => setTimeout(resolve, 1000));
 
-      let finalTranscript = transcript.trim() || interimTranscript.trim();
-      if (!speechSupported) {
-        setIsProcessing(false);
-        return;
-      }
-
       // Wait for speech recognition to finish processing or time out gracefully
       await waitForSpeechProcessing();
 
-      const finalTranscript = transcript.trim() || interimTranscript.trim();
-      const finalTranscript =
+      let finalTranscript =
         transcriptRef.current.trim() || interimTranscriptRef.current.trim();
 
       // Since Gemini doesn't have audio transcription, rely on browser speech recognition
@@ -320,16 +299,9 @@ export const PracticeSession: React.FC<PracticeSessionProps> = ({
   }, [
     stopRecording,
     stopListening,
-    transcript,
-    interimTranscript,
-    clearRecording,
-    resetTranscript,
-    speechSupported
-    speechSupported,
-    transcript,
-    interimTranscript,
-    speechError,
     waitForSpeechProcessing,
+    speechSupported,
+    speechError,
     clearRecording,
     resetTranscript
   ]);
@@ -988,11 +960,6 @@ export const PracticeSession: React.FC<PracticeSessionProps> = ({
                 <Tooltip
                   title={speechSupported ? 'Start recording your response' : 'Speech recognition is unavailable in this browser'}
                   placement="top"
-                  title={
-                    speechSupported
-                      ? ''
-                      : 'Speech recognition is not supported in this browser. Please try another browser to use the microphone.'
-                  }
                   disableHoverListener={speechSupported}
                 >
                   <span>
@@ -1010,9 +977,6 @@ export const PracticeSession: React.FC<PracticeSessionProps> = ({
                         cursor: isProcessing || !speechSupported ? 'not-allowed' : 'pointer'
                       }}
                       aria-disabled={isProcessing || !speechSupported}
-                        cursor: isProcessing || !speechSupported ? 'not-allowed' : 'pointer',
-                        opacity: speechSupported ? 1 : 0.6
-                      }}
                     >
                       <Mic sx={{ fontSize: 32 }} />
                     </button>
