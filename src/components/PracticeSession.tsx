@@ -75,6 +75,7 @@ export const PracticeSession: React.FC<PracticeSessionProps> = ({
   } = useAudioRecorder();
 
   const {
+    isListening,
     transcript,
     interimTranscript,
     resetTranscript,
@@ -83,6 +84,22 @@ export const PracticeSession: React.FC<PracticeSessionProps> = ({
     isSupported: speechSupported,
     error: speechError
   } = useSpeechRecognition();
+
+  const transcriptRef = useRef(transcript);
+  const interimTranscriptRef = useRef(interimTranscript);
+  const isListeningRef = useRef(isListening);
+
+  useEffect(() => {
+    transcriptRef.current = transcript;
+  }, [transcript]);
+
+  useEffect(() => {
+    interimTranscriptRef.current = interimTranscript;
+  }, [interimTranscript]);
+
+  useEffect(() => {
+    isListeningRef.current = isListening;
+  }, [isListening]);
 
   const latestAiMessage = useMemo(() => {
     for (let i = conversation.length - 1; i >= 0; i -= 1) {
@@ -203,6 +220,42 @@ export const PracticeSession: React.FC<PracticeSessionProps> = ({
     [handleAutoStartRecording, isRecording, lastAutoMicMessageTimestamp, userMicMode]
   );
 
+  const waitForSpeechProcessing = useCallback(
+    (timeoutMs = 3500) =>
+      new Promise<void>(resolve => {
+        const start = Date.now();
+        let timeoutId: ReturnType<typeof setTimeout> | undefined;
+
+        const finish = () => {
+          if (timeoutId) {
+            clearTimeout(timeoutId);
+          }
+          resolve();
+        };
+
+        const check = () => {
+          const hasTranscript =
+            transcriptRef.current.trim().length > 0 ||
+            interimTranscriptRef.current.trim().length > 0;
+
+          if (!isListeningRef.current && hasTranscript) {
+            finish();
+            return;
+          }
+
+          if (Date.now() - start >= timeoutMs) {
+            finish();
+            return;
+          }
+
+          timeoutId = setTimeout(check, 100);
+        };
+
+        check();
+      }),
+    []
+  );
+
   const handleStopRecording = useCallback(async () => {
     try {
       setIsProcessing(true);
@@ -214,10 +267,11 @@ export const PracticeSession: React.FC<PracticeSessionProps> = ({
         return;
       }
 
-      // Wait a moment for speech recognition to finish processing
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      // Wait for speech recognition to finish processing or time out gracefully
+      await waitForSpeechProcessing();
 
-      let finalTranscript = transcript.trim() || interimTranscript.trim();
+      const finalTranscript =
+        transcriptRef.current.trim() || interimTranscriptRef.current.trim();
 
       // Since Gemini doesn't have audio transcription, rely on browser speech recognition
       if (!finalTranscript) {
@@ -240,8 +294,7 @@ export const PracticeSession: React.FC<PracticeSessionProps> = ({
     stopRecording,
     stopListening,
     speechSupported,
-    transcript,
-    interimTranscript,
+    waitForSpeechProcessing,
     clearRecording,
     resetTranscript
   ]);
