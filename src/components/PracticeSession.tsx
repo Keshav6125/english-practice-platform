@@ -264,11 +264,16 @@ export const PracticeSession: React.FC<PracticeSessionProps> = ({
 
       // Wait a moment for speech recognition to finish processing
       await new Promise(resolve => setTimeout(resolve, 1000));
+      if (!speechSupported) {
+        setIsProcessing(false);
+        return;
+      }
 
       // Wait for speech recognition to finish processing or time out gracefully
       await waitForSpeechProcessing();
 
       let finalTranscript =
+      const finalTranscript =
         transcriptRef.current.trim() || interimTranscriptRef.current.trim();
 
       // Since Gemini doesn't have audio transcription, rely on browser speech recognition
@@ -304,6 +309,12 @@ export const PracticeSession: React.FC<PracticeSessionProps> = ({
     speechError,
     clearRecording,
     resetTranscript
+    clearRecording,
+    resetTranscript,
+    speechSupported,
+    speechError,
+    waitForSpeechProcessing,
+    processUserMessage
   ]);
 
   // Process user message and get AI response
@@ -959,6 +970,11 @@ export const PracticeSession: React.FC<PracticeSessionProps> = ({
               {!isRecording && isWaitingForUser ? (
                 <Tooltip
                   title={speechSupported ? 'Start recording your response' : 'Speech recognition is unavailable in this browser'}
+                  title={
+                    speechSupported
+                      ? 'Start recording your response'
+                      : 'Speech recognition is not supported in this browser. Please try another browser to use the microphone.'
+                  }
                   placement="top"
                   disableHoverListener={speechSupported}
                 >
@@ -975,6 +991,8 @@ export const PracticeSession: React.FC<PracticeSessionProps> = ({
                             : 'linear-gradient(135deg, var(--color-accent), var(--color-accent2))',
                         color: 'white',
                         cursor: isProcessing || !speechSupported ? 'not-allowed' : 'pointer'
+                        cursor: isProcessing || !speechSupported ? 'not-allowed' : 'pointer',
+                        opacity: speechSupported ? 1 : 0.6
                       }}
                       aria-disabled={isProcessing || !speechSupported}
                     >
