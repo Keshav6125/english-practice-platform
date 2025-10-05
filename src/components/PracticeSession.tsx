@@ -403,14 +403,49 @@ export const PracticeSession: React.FC<PracticeSessionProps> = ({
         return;
       }
 
+      const defaultAudioAnalysis: {
+        speakingRate: number;
+        pauseCount: number;
+        fillerWordCount: number;
+        fillerWordsUsed: string[];
+      } = {
+        speakingRate: 0,
+        pauseCount: 0,
+        fillerWordCount: 0,
+        fillerWordsUsed: []
+      };
+
+      let audioAnalysis = defaultAudioAnalysis;
+
+      if (typeof GeminiService.analyzeAudioCharacteristics === 'function') {
+        try {
+          const analysisResult = GeminiService.analyzeAudioCharacteristics(
+            fullTranscript,
+            sessionDuration
+          );
+
+          if (analysisResult && typeof analysisResult === 'object') {
+            audioAnalysis = {
+              ...defaultAudioAnalysis,
+              ...analysisResult
+            };
+          } else {
+            console.warn('GeminiService.analyzeAudioCharacteristics returned an invalid result. Using default audio analysis.');
+          }
+        } catch (analysisError) {
+          console.warn('GeminiService.analyzeAudioCharacteristics threw an error. Using default audio analysis.', analysisError);
+        }
+      } else {
+        console.warn('GeminiService.analyzeAudioCharacteristics is not available. Using default audio analysis.');
+      }
+
       // Generate feedback report
       const feedback = await GeminiService.generateFeedbackReport(
         fullTranscript,
         scenario,
         {
           duration: sessionDuration,
-          pauseCount: 0,
-          speakingRate: GeminiService.analyzeAudioCharacteristics(fullTranscript, sessionDuration).speakingRate
+          ...audioAnalysis
         }
       );
 
