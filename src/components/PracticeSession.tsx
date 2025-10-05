@@ -190,24 +190,10 @@ export const PracticeSession: React.FC<PracticeSessionProps> = ({
       return false;
     }
   }, [speechSupported, startRecording, startListening, resetTranscript]);
-  }, [
-    setError,
-    setInfoMessage,
-    speechSupported,
-    resetTranscript,
-    startRecording,
-    startListening
-  ]);
 
   const handleAutoStartRecording = useCallback(async () => {
     if (isRecording) {
       return true;
-    }
-    const started = await handleStartRecording();
-    if (!started) {
-      setInfoMessage('Automatic microphone activation was blocked. Please tap the mic button.');
-      return false;
-    }
     }
     const started = await handleStartRecording();
     if (!started) {
@@ -278,8 +264,6 @@ export const PracticeSession: React.FC<PracticeSessionProps> = ({
 
       // Wait a moment for speech recognition to finish processing
       await new Promise(resolve => setTimeout(resolve, 1000));
-
-      let finalTranscript = transcript.trim() || interimTranscript.trim();
       if (!speechSupported) {
         setIsProcessing(false);
         return;
@@ -288,7 +272,6 @@ export const PracticeSession: React.FC<PracticeSessionProps> = ({
       // Wait for speech recognition to finish processing or time out gracefully
       await waitForSpeechProcessing();
 
-      const finalTranscript = transcript.trim() || interimTranscript.trim();
       const finalTranscript =
         transcriptRef.current.trim() || interimTranscriptRef.current.trim();
 
@@ -320,18 +303,12 @@ export const PracticeSession: React.FC<PracticeSessionProps> = ({
   }, [
     stopRecording,
     stopListening,
-    transcript,
-    interimTranscript,
     clearRecording,
     resetTranscript,
-    speechSupported
     speechSupported,
-    transcript,
-    interimTranscript,
     speechError,
     waitForSpeechProcessing,
-    clearRecording,
-    resetTranscript
+    processUserMessage
   ]);
 
   // Process user message and get AI response
@@ -986,13 +963,12 @@ export const PracticeSession: React.FC<PracticeSessionProps> = ({
             <Box display="flex" alignItems="center" gap={4}>
               {!isRecording && isWaitingForUser ? (
                 <Tooltip
-                  title={speechSupported ? 'Start recording your response' : 'Speech recognition is unavailable in this browser'}
-                  placement="top"
                   title={
                     speechSupported
-                      ? ''
+                      ? 'Start recording your response'
                       : 'Speech recognition is not supported in this browser. Please try another browser to use the microphone.'
                   }
+                  placement="top"
                   disableHoverListener={speechSupported}
                 >
                   <span>
@@ -1007,12 +983,10 @@ export const PracticeSession: React.FC<PracticeSessionProps> = ({
                             ? 'rgba(156,163,175,0.3)'
                             : 'linear-gradient(135deg, var(--color-accent), var(--color-accent2))',
                         color: 'white',
-                        cursor: isProcessing || !speechSupported ? 'not-allowed' : 'pointer'
-                      }}
-                      aria-disabled={isProcessing || !speechSupported}
                         cursor: isProcessing || !speechSupported ? 'not-allowed' : 'pointer',
                         opacity: speechSupported ? 1 : 0.6
                       }}
+                      aria-disabled={isProcessing || !speechSupported}
                     >
                       <Mic sx={{ fontSize: 32 }} />
                     </button>
