@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   Box,
   Card,
@@ -14,7 +14,10 @@ import {
   DialogActions,
   IconButton,
   Paper,
-  Avatar
+  Avatar,
+  ToggleButtonGroup,
+  ToggleButton,
+  Tooltip
 } from '@mui/material';
 import {
   Mic,
@@ -53,6 +56,13 @@ export const PracticeSession: React.FC<PracticeSessionProps> = ({
   const [error, setError] = useState<string | null>(null);
   const [turnCount, setTurnCount] = useState(0);
   const [isWaitingForUser, setIsWaitingForUser] = useState(false);
+  const [aiSpeechMode, setAiSpeechMode] = useState<'auto' | 'manual'>('manual');
+  const [userMicMode, setUserMicMode] = useState<'auto' | 'manual'>('manual');
+  const [infoMessage, setInfoMessage] = useState<string | null>(null);
+  const [lastSpokenMessageTimestamp, setLastSpokenMessageTimestamp] = useState<number | null>(null);
+  const [lastAutoMicMessageTimestamp, setLastAutoMicMessageTimestamp] = useState<number | null>(null);
+  const [isAiSpeaking, setIsAiSpeaking] = useState(false);
+  const activeSpeechTimestampRef = useRef<number | null>(null);
 
   const {
     isRecording,
@@ -72,6 +82,44 @@ export const PracticeSession: React.FC<PracticeSessionProps> = ({
     stopListening,
     isSupported: speechSupported
   } = useSpeechRecognition();
+
+  const latestAiMessage = useMemo(() => {
+    for (let i = conversation.length - 1; i >= 0; i -= 1) {
+      if (conversation[i].role === 'assistant') {
+        return conversation[i];
+      }
+    }
+    return null;
+  }, [conversation]);
+
+  // Load persisted auto-mode preferences
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+    const storedAiMode = window.localStorage.getItem('aiSpeechMode');
+    if (storedAiMode === 'auto' || storedAiMode === 'manual') {
+      setAiSpeechMode(storedAiMode);
+    }
+    const storedUserMode = window.localStorage.getItem('userMicMode');
+    if (storedUserMode === 'auto' || storedUserMode === 'manual') {
+      setUserMicMode(storedUserMode);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+    window.localStorage.setItem('aiSpeechMode', aiSpeechMode);
+  }, [aiSpeechMode]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+    window.localStorage.setItem('userMicMode', userMicMode);
+  }, [userMicMode]);
 
   // Initialize session with AI greeting
   useEffect(() => {
@@ -100,15 +148,47 @@ export const PracticeSession: React.FC<PracticeSessionProps> = ({
   const handleStartRecording = useCallback(async () => {
     try {
       setError(null);
+      setInfoMessage(null);
       resetTranscript();
       await startRecording();
       if (speechSupported) {
         startListening();
       }
+      return true;
     } catch (err) {
       setError('Failed to start recording. Please check your microphone permissions.');
+      return false;
     }
   }, [startRecording, startListening, resetTranscript, speechSupported]);
+
+  const handleAutoStartRecording = useCallback(async () => {
+    if (isRecording) {
+      return true;
+    }
+    const started = await handleStartRecording();
+    if (!started) {
+      setInfoMessage('Automatic microphone activation was blocked. Please tap the mic button.');
+      return false;
+    }
+    setInfoMessage(null);
+    return true;
+  }, [handleStartRecording, isRecording]);
+
+  const handleAiSpeechCompletion = useCallback(
+    (timestamp: number, warningMessage?: string) => {
+      if (warningMessage) {
+        setInfoMessage(warningMessage);
+      }
+      setIsAiSpeaking(false);
+      if (userMicMode === 'auto') {
+        if (lastAutoMicMessageTimestamp !== timestamp && !isRecording) {
+          handleAutoStartRecording();
+        }
+        setLastAutoMicMessageTimestamp(timestamp);
+      }
+    },
+    [handleAutoStartRecording, isRecording, lastAutoMicMessageTimestamp, userMicMode]
+  );
 
   const handleStopRecording = useCallback(async () => {
     try {
@@ -252,17 +332,100 @@ export const PracticeSession: React.FC<PracticeSessionProps> = ({
   };
 
   // Text-to-speech for AI responses
-  const speakAiResponse = (text: string) => {
-    if ('speechSynthesis' in window && text) {
-      const utterance = new SpeechSynthesisUtterance(text);
+  const speakAiResponse = useCallback(
+    (message: ConversationMessage) => {
+      const text = message.content;
+      const timestamp = message.timestamp.getTime();
+      setInfoMessage(null);
+      if (!text) {
+        return false;
+      }
+      if (typeof window === 'undefined') {
+        return false;
+      }
+
+      if (!('speechSynthesis' in window) || typeof window.SpeechSynthesisUtterance === 'undefined') {
+        setInfoMessage('Text-to-speech is not supported in this browser. The AI will respond with text only.');
+        setLastSpokenMessageTimestamp(timestamp);
+        handleAiSpeechCompletion(timestamp);
+        return false;
+      }
+
+      window.speechSynthesis.cancel();
+      const utterance = new window.SpeechSynthesisUtterance(text);
       utterance.rate = 0.9;
       utterance.pitch = 1;
       utterance.volume = 0.8;
-      speechSynthesis.speak(utterance);
-    }
-  };
 
-  const latestAiMessage = conversation.filter(msg => msg.role === 'assistant').pop();
+      utterance.onend = () => {
+        if (activeSpeechTimestampRef.current === timestamp) {
+          activeSpeechTimestampRef.current = null;
+          handleAiSpeechCompletion(timestamp);
+        }
+      };
+
+      utterance.onerror = () => {
+        if (activeSpeechTimestampRef.current === timestamp) {
+          activeSpeechTimestampRef.current = null;
+          handleAiSpeechCompletion(
+            timestamp,
+            'Unable to play speech audio automatically. Please use the speaker button to retry.'
+          );
+        }
+      };
+
+      activeSpeechTimestampRef.current = timestamp;
+      setIsAiSpeaking(true);
+      setLastSpokenMessageTimestamp(timestamp);
+      window.speechSynthesis.speak(utterance);
+      return true;
+    },
+    [handleAiSpeechCompletion]
+  );
+
+  useEffect(() => {
+    if (aiSpeechMode !== 'auto') {
+      return;
+    }
+    if (!latestAiMessage) {
+      return;
+    }
+    const timestamp = latestAiMessage.timestamp.getTime();
+    if (lastSpokenMessageTimestamp === timestamp) {
+      return;
+    }
+    speakAiResponse(latestAiMessage);
+  }, [aiSpeechMode, lastSpokenMessageTimestamp, latestAiMessage, speakAiResponse]);
+
+  useEffect(() => {
+    if (userMicMode !== 'auto') {
+      return;
+    }
+    if (!latestAiMessage) {
+      return;
+    }
+    if (!isWaitingForUser || isRecording || isAiSpeaking) {
+      return;
+    }
+    const timestamp = latestAiMessage.timestamp.getTime();
+    if (lastSpokenMessageTimestamp !== timestamp) {
+      return;
+    }
+    if (lastAutoMicMessageTimestamp === timestamp) {
+      return;
+    }
+    handleAutoStartRecording();
+    setLastAutoMicMessageTimestamp(timestamp);
+  }, [
+    handleAutoStartRecording,
+    isAiSpeaking,
+    isRecording,
+    isWaitingForUser,
+    lastAutoMicMessageTimestamp,
+    lastSpokenMessageTimestamp,
+    latestAiMessage,
+    userMicMode
+  ]);
 
   return (
     <Box sx={{ maxWidth: 1000, mx: 'auto', p: 3, backgroundColor: 'var(--color-bg)', minHeight: '100vh' }}>
@@ -359,6 +522,12 @@ export const PracticeSession: React.FC<PracticeSessionProps> = ({
         </Alert>
       )}
 
+      {infoMessage && (
+        <Alert severity="warning" sx={{ mb: 2 }} onClose={() => setInfoMessage(null)}>
+          {infoMessage}
+        </Alert>
+      )}
+
       {/* Conversation Display */}
       <Card sx={{ 
         mb: 4, 
@@ -425,10 +594,10 @@ export const PracticeSession: React.FC<PracticeSessionProps> = ({
                 {message.role === 'assistant' && (
                   <IconButton
                     size="small"
-                    onClick={() => speakAiResponse(message.content)}
-                    sx={{ 
-                      position: 'absolute', 
-                      top: 8, 
+                    onClick={() => speakAiResponse(message)}
+                    sx={{
+                      position: 'absolute',
+                      top: 8,
                       right: 8,
                       backgroundColor: 'rgba(255,255,255,0.8)',
                       '&:hover': {
@@ -474,7 +643,7 @@ export const PracticeSession: React.FC<PracticeSessionProps> = ({
       </Card>
 
       {/* Recording Interface */}
-      <Card sx={{ 
+      <Card sx={{
         mb: 3,
         backgroundColor: 'var(--color-surface)',
         border: '1px solid var(--color-divider)',
@@ -482,6 +651,98 @@ export const PracticeSession: React.FC<PracticeSessionProps> = ({
         boxShadow: 'var(--shadow-card)'
       }}>
         <CardContent>
+          <Box
+            display="flex"
+            justifyContent="space-between"
+            alignItems="center"
+            flexWrap="wrap"
+            gap={2}
+            width="100%"
+            mb={3}
+          >
+            <Box display="flex" alignItems="center" gap={1.5} flexWrap="wrap">
+              <Typography variant="subtitle2" sx={{ fontWeight: 600, color: 'var(--color-text)' }}>
+                AI speech:
+              </Typography>
+              <ToggleButtonGroup
+                exclusive
+                size="small"
+                value={aiSpeechMode}
+                onChange={(_, value) => {
+                  if (value === 'auto' || value === 'manual') {
+                    setAiSpeechMode(value);
+                  }
+                }}
+                aria-label="AI speech start mode"
+                sx={{
+                  backgroundColor: 'rgba(79,70,229,0.05)',
+                  borderRadius: 'var(--radius-pill)',
+                  '& .MuiToggleButtonGroup-grouped': {
+                    border: 'none',
+                    px: 2,
+                    '&.Mui-selected': {
+                      backgroundColor: 'var(--color-accent)',
+                      color: 'white'
+                    }
+                  }
+                }}
+              >
+                <ToggleButton value="auto" aria-label="AI speech automatic mode">
+                  Auto
+                </ToggleButton>
+                <ToggleButton value="manual" aria-label="AI speech manual mode">
+                  Manual
+                </ToggleButton>
+              </ToggleButtonGroup>
+              {aiSpeechMode === 'auto' && (
+                <Tooltip title="AI responses will play automatically">
+                  <Chip label="AI Auto On" size="small" color="primary" variant="outlined" />
+                </Tooltip>
+              )}
+            </Box>
+
+            <Box display="flex" alignItems="center" gap={1.5} flexWrap="wrap">
+              <Typography variant="subtitle2" sx={{ fontWeight: 600, color: 'var(--color-text)' }}>
+                User mic:
+              </Typography>
+              <ToggleButtonGroup
+                exclusive
+                size="small"
+                value={userMicMode}
+                onChange={(_, value) => {
+                  if (value === 'auto' || value === 'manual') {
+                    setUserMicMode(value);
+                  }
+                }}
+                aria-label="User microphone start mode"
+                sx={{
+                  backgroundColor: 'rgba(16,185,129,0.08)',
+                  borderRadius: 'var(--radius-pill)',
+                  '& .MuiToggleButtonGroup-grouped': {
+                    border: 'none',
+                    px: 2,
+                    '&.Mui-selected': {
+                      backgroundColor: 'var(--color-success)',
+                      color: 'white'
+                    }
+                  }
+                }}
+              >
+                <ToggleButton value="auto" aria-label="User microphone automatic mode">
+                  Auto
+                </ToggleButton>
+                <ToggleButton value="manual" aria-label="User microphone manual mode">
+                  Manual
+                </ToggleButton>
+              </ToggleButtonGroup>
+              {userMicMode === 'auto' && (
+                <Tooltip title="Your microphone will open automatically when it's your turn">
+                  <Chip label="Mic Auto On" size="small" color="success" variant="outlined" />
+                </Tooltip>
+              )}
+            </Box>
+          </Box>
+
           <Box display="flex" flexDirection="column" alignItems="center" gap={4}>
             {/* Recording Status */}
             {isRecording && (
