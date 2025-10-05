@@ -217,12 +217,15 @@ export const PracticeSession: React.FC<PracticeSessionProps> = ({
       // Wait a moment for speech recognition to finish processing
       await new Promise(resolve => setTimeout(resolve, 1000));
 
-      let finalTranscript = transcript.trim() || interimTranscript.trim();
+      const finalTranscript = transcript.trim() || interimTranscript.trim();
 
       // Since Gemini doesn't have audio transcription, rely on browser speech recognition
       if (!finalTranscript) {
+        if (speechError) {
+          setError(null);
+          return;
+        }
         setError('No speech detected. Please try speaking again or ensure your microphone is working.');
-        setIsProcessing(false);
         return;
       }
 
@@ -242,6 +245,7 @@ export const PracticeSession: React.FC<PracticeSessionProps> = ({
     speechSupported,
     transcript,
     interimTranscript,
+    speechError,
     clearRecording,
     resetTranscript
   ]);
