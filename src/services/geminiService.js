@@ -162,4 +162,40 @@ export class GeminiService {
       throw new Error('Failed to generate feedback report');
     }
   }
+
+  static analyzeAudioCharacteristics(transcript, sessionDurationMs) {
+    const safeTranscript = typeof transcript === 'string' ? transcript : '';
+    const words = safeTranscript
+      .trim()
+      .split(/\s+/)
+      .filter(Boolean);
+
+    const durationMinutes = sessionDurationMs && sessionDurationMs > 0
+      ? sessionDurationMs / 60000
+      : 0;
+
+    const rawSpeakingRate = durationMinutes > 0 ? words.length / durationMinutes : 0;
+    const speakingRate = Number.isFinite(rawSpeakingRate) ? Math.round(rawSpeakingRate * 10) / 10 : 0;
+
+    const fillerWordSet = new Set(['um', 'uh', 'er', 'ah', 'like', 'you know', 'so']);
+    const normalizedWords = safeTranscript
+      .toLowerCase()
+      .split(/\s+/)
+      .map(word => word.replace(/[^a-z']+/g, ''));
+
+    let fillerWordCount = 0;
+    const fillerWordsUsed = new Set();
+    normalizedWords.forEach(word => {
+      if (fillerWordSet.has(word)) {
+        fillerWordCount += 1;
+        fillerWordsUsed.add(word);
+      }
+    });
+
+    return {
+      speakingRate,
+      fillerWordCount,
+      fillerWordsUsed: Array.from(fillerWordsUsed)
+    };
+  }
 }

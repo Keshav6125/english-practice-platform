@@ -174,6 +174,13 @@ export const PracticeSession: React.FC<PracticeSessionProps> = ({
         return false;
       }
       setError(null);
+      setInfoMessage(null);
+      if (!speechSupported) {
+        setError(
+          'Speech recognition is not supported in this browser. Please switch to a supported browser like Chrome or Edge to practice with voice.'
+        );
+        return false;
+      }
       resetTranscript();
       await startRecording();
       startListening();
@@ -182,6 +189,7 @@ export const PracticeSession: React.FC<PracticeSessionProps> = ({
       setError('Failed to start recording. Please check your microphone permissions.');
       return false;
     }
+  }, [speechSupported, startRecording, startListening, resetTranscript]);
   }, [
     setError,
     setInfoMessage,
@@ -194,6 +202,12 @@ export const PracticeSession: React.FC<PracticeSessionProps> = ({
   const handleAutoStartRecording = useCallback(async () => {
     if (isRecording) {
       return true;
+    }
+    const started = await handleStartRecording();
+    if (!started) {
+      setInfoMessage('Automatic microphone activation was blocked. Please tap the mic button.');
+      return false;
+    }
     }
     const started = await handleStartRecording();
     if (!started) {
@@ -259,9 +273,13 @@ export const PracticeSession: React.FC<PracticeSessionProps> = ({
   const handleStopRecording = useCallback(async () => {
     try {
       setIsProcessing(true);
-      const audioRecording = await stopRecording();
+      await stopRecording();
       stopListening();
 
+      // Wait a moment for speech recognition to finish processing
+      await new Promise(resolve => setTimeout(resolve, 1000));
+
+      let finalTranscript = transcript.trim() || interimTranscript.trim();
       if (!speechSupported) {
         setIsProcessing(false);
         return;
@@ -275,6 +293,11 @@ export const PracticeSession: React.FC<PracticeSessionProps> = ({
         transcriptRef.current.trim() || interimTranscriptRef.current.trim();
 
       // Since Gemini doesn't have audio transcription, rely on browser speech recognition
+      if (!speechSupported) {
+        setIsProcessing(false);
+        return;
+      }
+
       if (!finalTranscript) {
         if (speechError) {
           setError(null);
@@ -297,6 +320,11 @@ export const PracticeSession: React.FC<PracticeSessionProps> = ({
   }, [
     stopRecording,
     stopListening,
+    transcript,
+    interimTranscript,
+    clearRecording,
+    resetTranscript,
+    speechSupported
     speechSupported,
     transcript,
     interimTranscript,
@@ -622,6 +650,18 @@ export const PracticeSession: React.FC<PracticeSessionProps> = ({
         </Alert>
       )}
 
+      {speechError && (
+        <Alert severity="error" sx={{ mb: 2 }}>
+          {speechError}
+        </Alert>
+      )}
+
+      {infoMessage && (
+        <Alert severity="warning" sx={{ mb: 2 }} onClose={() => setInfoMessage(null)}>
+          {infoMessage}
+        </Alert>
+      )}
+
       {/* Conversation Display */}
       <Card sx={{ 
         mb: 4, 
@@ -911,6 +951,8 @@ export const PracticeSession: React.FC<PracticeSessionProps> = ({
             <Box display="flex" alignItems="center" gap={4}>
               {!isRecording && isWaitingForUser ? (
                 <Tooltip
+                  title={speechSupported ? 'Start recording your response' : 'Speech recognition is unavailable in this browser'}
+                  placement="top"
                   title={
                     speechSupported
                       ? ''
@@ -930,6 +972,9 @@ export const PracticeSession: React.FC<PracticeSessionProps> = ({
                             ? 'rgba(156,163,175,0.3)'
                             : 'linear-gradient(135deg, var(--color-accent), var(--color-accent2))',
                         color: 'white',
+                        cursor: isProcessing || !speechSupported ? 'not-allowed' : 'pointer'
+                      }}
+                      aria-disabled={isProcessing || !speechSupported}
                         cursor: isProcessing || !speechSupported ? 'not-allowed' : 'pointer',
                         opacity: speechSupported ? 1 : 0.6
                       }}

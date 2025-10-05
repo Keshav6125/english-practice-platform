@@ -12,6 +12,11 @@ export const useSpeechRecognition = (config = {}) => {
 
   // Check for browser support
   useEffect(() => {
+    if (typeof window === 'undefined') {
+      setIsSupported(false);
+      return;
+    }
+
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (SpeechRecognition) {
       setIsSupported(true);
