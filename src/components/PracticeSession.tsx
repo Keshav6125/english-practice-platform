@@ -75,6 +75,7 @@ export const PracticeSession: React.FC<PracticeSessionProps> = ({
   } = useAudioRecorder();
 
   const {
+    isListening,
     transcript,
     interimTranscript,
     resetTranscript,
@@ -83,6 +84,22 @@ export const PracticeSession: React.FC<PracticeSessionProps> = ({
     isSupported: speechSupported,
     error: speechError
   } = useSpeechRecognition();
+
+  const transcriptRef = useRef(transcript);
+  const interimTranscriptRef = useRef(interimTranscript);
+  const isListeningRef = useRef(isListening);
+
+  useEffect(() => {
+    transcriptRef.current = transcript;
+  }, [transcript]);
+
+  useEffect(() => {
+    interimTranscriptRef.current = interimTranscript;
+  }, [interimTranscript]);
+
+  useEffect(() => {
+    isListeningRef.current = isListening;
+  }, [isListening]);
 
   const latestAiMessage = useMemo(() => {
     for (let i = conversation.length - 1; i >= 0; i -= 1) {
@@ -148,6 +165,14 @@ export const PracticeSession: React.FC<PracticeSessionProps> = ({
   // Handle voice recording and transcription
   const handleStartRecording = useCallback(async () => {
     try {
+      setInfoMessage(null);
+      if (!speechSupported) {
+        const unsupportedMessage =
+          'Speech recognition is not supported in this browser. Please try using a supported browser like Chrome or Edge for microphone features.';
+        setError(unsupportedMessage);
+        setInfoMessage(unsupportedMessage);
+        return false;
+      }
       setError(null);
       setInfoMessage(null);
       if (!speechSupported) {
@@ -165,10 +190,24 @@ export const PracticeSession: React.FC<PracticeSessionProps> = ({
       return false;
     }
   }, [speechSupported, startRecording, startListening, resetTranscript]);
+  }, [
+    setError,
+    setInfoMessage,
+    speechSupported,
+    resetTranscript,
+    startRecording,
+    startListening
+  ]);
 
   const handleAutoStartRecording = useCallback(async () => {
     if (isRecording) {
       return true;
+    }
+    const started = await handleStartRecording();
+    if (!started) {
+      setInfoMessage('Automatic microphone activation was blocked. Please tap the mic button.');
+      return false;
+    }
     }
     const started = await handleStartRecording();
     if (!started) {
@@ -195,6 +234,42 @@ export const PracticeSession: React.FC<PracticeSessionProps> = ({
     [handleAutoStartRecording, isRecording, lastAutoMicMessageTimestamp, userMicMode]
   );
 
+  const waitForSpeechProcessing = useCallback(
+    (timeoutMs = 3500) =>
+      new Promise<void>(resolve => {
+        const start = Date.now();
+        let timeoutId: ReturnType<typeof setTimeout> | undefined;
+
+        const finish = () => {
+          if (timeoutId) {
+            clearTimeout(timeoutId);
+          }
+          resolve();
+        };
+
+        const check = () => {
+          const hasTranscript =
+            transcriptRef.current.trim().length > 0 ||
+            interimTranscriptRef.current.trim().length > 0;
+
+          if (!isListeningRef.current && hasTranscript) {
+            finish();
+            return;
+          }
+
+          if (Date.now() - start >= timeoutMs) {
+            finish();
+            return;
+          }
+
+          timeoutId = setTimeout(check, 100);
+        };
+
+        check();
+      }),
+    []
+  );
+
   const handleStopRecording = useCallback(async () => {
     try {
       setIsProcessing(true);
@@ -205,6 +280,16 @@ export const PracticeSession: React.FC<PracticeSessionProps> = ({
       await new Promise(resolve => setTimeout(resolve, 1000));
 
       let finalTranscript = transcript.trim() || interimTranscript.trim();
+      if (!speechSupported) {
+        setIsProcessing(false);
+        return;
+      }
+
+      // Wait for speech recognition to finish processing or time out gracefully
+      await waitForSpeechProcessing();
+
+      const finalTranscript =
+        transcriptRef.current.trim() || interimTranscriptRef.current.trim();
 
       // Since Gemini doesn't have audio transcription, rely on browser speech recognition
       if (!speechSupported) {
@@ -236,6 +321,10 @@ export const PracticeSession: React.FC<PracticeSessionProps> = ({
     clearRecording,
     resetTranscript,
     speechSupported
+    speechSupported,
+    waitForSpeechProcessing,
+    clearRecording,
+    resetTranscript
   ]);
 
   // Process user message and get AI response
@@ -534,9 +623,23 @@ export const PracticeSession: React.FC<PracticeSessionProps> = ({
       </Card>
 
       {/* Error Display */}
-      {(error || recordingError) && (
-        <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>
-          {error || recordingError}
+      {(error || recordingError || speechError) && (
+        <Alert
+          severity="error"
+          sx={{ mb: 2 }}
+          onClose={error ? () => setError(null) : undefined}
+        >
+          {[error, recordingError, speechError]
+            .filter(Boolean)
+            .map((message, index) => (
+              <div key={index}>{message}</div>
+            ))}
+        </Alert>
+      )}
+
+      {infoMessage && (
+        <Alert severity="warning" sx={{ mb: 2 }} onClose={() => setInfoMessage(null)}>
+          {infoMessage}
         </Alert>
       )}
 
@@ -843,6 +946,12 @@ export const PracticeSession: React.FC<PracticeSessionProps> = ({
                 <Tooltip
                   title={speechSupported ? 'Start recording your response' : 'Speech recognition is unavailable in this browser'}
                   placement="top"
+                  title={
+                    speechSupported
+                      ? ''
+                      : 'Speech recognition is not supported in this browser. Please try another browser to use the microphone.'
+                  }
+                  disableHoverListener={speechSupported}
                 >
                   <span>
                     <button
@@ -859,6 +968,9 @@ export const PracticeSession: React.FC<PracticeSessionProps> = ({
                         cursor: isProcessing || !speechSupported ? 'not-allowed' : 'pointer'
                       }}
                       aria-disabled={isProcessing || !speechSupported}
+                        cursor: isProcessing || !speechSupported ? 'not-allowed' : 'pointer',
+                        opacity: speechSupported ? 1 : 0.6
+                      }}
                     >
                       <Mic sx={{ fontSize: 32 }} />
                     </button>
