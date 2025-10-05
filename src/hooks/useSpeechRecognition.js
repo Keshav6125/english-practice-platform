@@ -8,16 +8,16 @@ export const useSpeechRecognition = (config = {}) => {
   const [error, setError] = useState(null);
 
   const recognitionRef = useRef(null);
-  const isSupported = useRef(false);
+  const [isSupported, setIsSupported] = useState(false);
 
   // Check for browser support
   useEffect(() => {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (SpeechRecognition) {
-      isSupported.current = true;
+      setIsSupported(true);
       recognitionRef.current = new SpeechRecognition();
     } else {
-      isSupported.current = false;
+      setIsSupported(false);
       setError('Speech recognition is not supported in this browser');
     }
   }, []);
@@ -105,7 +105,7 @@ export const useSpeechRecognition = (config = {}) => {
   }, [config]);
 
   const startListening = useCallback(() => {
-    if (!recognitionRef.current || !isSupported.current) {
+    if (!recognitionRef.current || !isSupported) {
       setError('Speech recognition is not available');
       return;
     }
@@ -117,7 +117,7 @@ export const useSpeechRecognition = (config = {}) => {
       setError('Failed to start speech recognition');
       console.error('Speech recognition start error:', err);
     }
-  }, []);
+  }, [isSupported]);
 
   const stopListening = useCallback(() => {
     if (recognitionRef.current && isListening) {
@@ -141,6 +141,6 @@ export const useSpeechRecognition = (config = {}) => {
     startListening,
     stopListening,
     resetTranscript,
-    isSupported: isSupported.current
+    isSupported
   };
 };
